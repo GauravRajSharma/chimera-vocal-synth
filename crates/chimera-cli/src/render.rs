@@ -13,7 +13,9 @@ use chimera::creatures::{CREATURES, creature_by_id};
 use chimera::math::{js_max, js_min, js_round, log10};
 use chimera::phonetics::beatbox::{BEAT_PRESETS, BEAT_SOUNDS, BeatStep, beat_ready, parse_beat};
 use chimera::phonetics::english::EnglishG2P;
-use chimera::phonetics::ipa::tokenize_ipa;
+use chimera::phonetics::Lang;
+use chimera::phonetics::ipa::{tokenize_ipa, tokenize_ipa_lang};
+use chimera::phonetics::nepali::{is_devanagari, nepali_phrases};
 use chimera::phonetics::planner::{
     PhraseInput, PlanOptions, plan_phrases, plan_utterance, vowel_table,
 };
@@ -77,11 +79,16 @@ fn mark_line(marks: &[(f64, String)]) -> String {
         .join(" ")
 }
 
-/// IPA utterances through the planner. `render speech <out> ["ˈɑpɑ / ˈɑbɑ"] [body]`
+/// IPA utterances through the planner. `render speech <out> ["ˈɑpɑ / ˈɑbɑ"] [body] [english|nepali]`
 pub fn speech(ctx: &Ctx, a: &[String]) -> Result<(), String> {
     let name = arg(a, 0, "out/speech");
     let text = arg(a, 1, "ˈɑpɑ");
     let body_name = arg(a, 2, "male");
+    let lang = match arg(a, 3, "english") {
+        "english" => None,
+        "nepali" => Some(Lang::Nepali),
+        l => return Err(format!("no language {l} (english, nepali)")),
+    };
     let b = body(body_name)?;
     let f0 = match body_name {
         "female" => 200.0,
@@ -93,13 +100,17 @@ pub fn speech(ctx: &Ctx, a: &[String]) -> Result<(), String> {
     let mut marks: Vec<(f64, String)> = Vec::new();
     let mut t0 = 0.05;
     for u in text.split('/').map(str::trim).filter(|u| !u.is_empty()) {
-        let segs = tokenize_ipa(u);
+        let segs = match lang {
+            Some(l) => tokenize_ipa_lang(u, l),
+            None => tokenize_ipa(u),
+        };
         let plan = plan_utterance(
             &segs,
             &PlanOptions {
                 body: body_name.into(),
                 t0,
                 f0: Some(f0),
+                lang,
                 ..Default::default()
             },
         );
@@ -145,7 +156,9 @@ pub fn text_f0(body_name: &str) -> f64 {
 pub fn say(g: &EnglishG2P, text: &str, body_name: &str) -> Result<Spoken, String> {
     let b = body(body_name)?;
     let f0 = text_f0(body_name);
-    let phrases = g.to_phrases(text);
+    // Devanagari is Nepali (its Latin words still go through `g`)
+    let lang = is_devanagari(text).then_some(Lang::Nepali);
+    let phrases = if lang.is_some() { nepali_phrases(text, g) } else { g.to_phrases(text) };
     let shown: Vec<String> = phrases
         .iter()
         .map(|p| {
@@ -177,6 +190,7 @@ pub fn say(g: &EnglishG2P, text: &str, body_name: &str) -> Result<Spoken, String
             body: body_name.into(),
             t0: 0.05,
             f0: Some(f0),
+            lang,
             ..Default::default()
         },
     );
@@ -187,7 +201,8 @@ pub fn say(g: &EnglishG2P, text: &str, body_name: &str) -> Result<Spoken, String
     Ok(Spoken { out, plan, shown: shown.join(" | ") })
 }
 
-/// English text through G2P and the phrase planner. `render text <out> ["Text."] [body]`
+/// Text through G2P and the phrase planner (English, or Nepali when it's Devanagari).
+/// `render text <out> ["Text."] [body]`
 pub fn text(ctx: &Ctx, a: &[String]) -> Result<(), String> {
     let name = arg(a, 0, "out/text");
     let text = arg(a, 1, "Hello world.");
