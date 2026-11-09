@@ -10,6 +10,7 @@ pub mod durations;
 pub mod english;
 pub mod inventory;
 pub mod ipa;
+pub mod nepali;
 pub mod planner;
 pub mod sing;
 pub mod songs;
@@ -39,6 +40,17 @@ impl Segment {
     pub fn new(ipa: &str) -> Segment {
         Segment { ipa: ipa.to_string(), ..Default::default() }
     }
+}
+
+/// The language whose rules plan an utterance. English is the default and is what every plan
+/// without a language gets; Nepali turns off the English aspiration rule (plain voiceless stops
+/// stay unaspirated) and lets segments carry ʰ, ʱ and nasalisation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Lang {
+    #[default]
+    English,
+    Nepali,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,6 +1,7 @@
 //! IPA string → segments (stress ˈ ˌ, length ː, tie bars, affricates, diphthongs, word gaps).
 
-use super::Segment;
+use super::inventory::{ASPIRATED, BREATHY, Manner, Mods, NASALISED, Voicing};
+use super::{Lang, Segment};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -28,8 +29,29 @@ pub fn init() {
     nfc_tables();
 }
 
+/// English IPA: modifiers the planner doesn't model (aspiration, nasalisation, dental marks) are
+/// dropped.
 pub fn tokenize_ipa(input: &str) -> Vec<Segment> {
+    tokenize(input, Lang::English)
+}
+
+/// IPA in a language's rules. Nepali keeps ʰ (aspirated), ʱ or U+0324 (breathy voice), U+032A
+/// on t and d (dental) and U+0303 on vowels (nasal) as part of the segment: "bʱ", "t̪ʰ", "ã".
+pub fn tokenize_ipa_lang(input: &str, lang: Lang) -> Vec<Segment> {
+    tokenize(input, lang)
+}
+
+/// precomposed nasal vowels NFC makes, back to vowel + U+0303
+const NASAL_VOWELS: [(char, &str); 5] = [('ã', "a\u{303}"), ('ẽ', "e\u{303}"), ('ĩ', "i\u{303}"), ('õ', "o\u{303}"), ('ũ', "u\u{303}")];
+
+fn tokenize(input: &str, lang: Lang) -> Vec<Segment> {
+    let nepali = lang == Lang::Nepali;
     let mut s = nfc(input);
+    if nepali {
+        for (a, b) in NASAL_VOWELS {
+            s = s.replace(a, b);
+        }
+    }
     for (a, b) in ALIASES {
         s = s.replace(a, b);
     }
@@ -79,20 +101,56 @@ pub fn tokenize_ipa(input: &str) -> Vec<Segment> {
             tok = ch.to_string();
         }
         i += tok.chars().count();
-        // skip combining diacritics we do not model
-        while i < s.len() && ('\u{300}'..='\u{36F}').contains(&s[i]) {
+        let mut mods = Mods::default();
+        let mut dental = false;
+        // skip combining diacritics we do not model (Nepali: keep the ones it contrasts)
+        while i < s.len() && (('\u{300}'..='\u{36F}').contains(&s[i]) || (nepali && (s[i] == ASPIRATED || s[i] == BREATHY))) {
+            match s[i] {
+                ASPIRATED => mods.aspirated = true,
+                BREATHY | '\u{324}' => mods.breathy = true,
+                '\u{32A}' => dental = true,
+                NASALISED => mods.nasal = true,
+                _ => {}
+            }
             i += 1;
         }
         if !known.contains(tok.as_str()) {
             continue;
         }
         let is_v = tok.chars().next().is_some_and(|c| VOWEL_CHARS.contains(c)) && !super::inventory::consonant_symbols().contains(&tok.as_str());
+        if nepali {
+            tok = nepali_token(tok, is_v, dental, mods);
+        }
         out.push(Segment { ipa: tok, stress: Some(if is_v { stress } else { 0 }), ..Default::default() });
         if is_v {
             stress = 0;
         }
     }
     out
+}
+
+/// A Nepali token with the modifiers its kind can carry: dental on t/d, ʰ on voiceless stops
+/// and affricates, ʱ on voiced consonants, nasalisation on vowels. Others are dropped.
+fn nepali_token(base: String, is_v: bool, dental: bool, m: Mods) -> String {
+    let mut tok = base;
+    if dental && (tok == "t" || tok == "d") {
+        tok.push('\u{32A}');
+    }
+    if is_v {
+        if m.nasal {
+            tok.push(NASALISED);
+        }
+        return tok;
+    }
+    let Some(def) = super::inventory::phoneme(&tok, crate::anatomy::human::BodyMix::MALE) else { return tok };
+    let obstruent = matches!(def.manner, Manner::Stop | Manner::Affricate);
+    if m.aspirated && obstruent && def.voicing == Voicing::Voiceless {
+        tok.push(ASPIRATED);
+    } else if (m.breathy || m.aspirated) && def.voicing == Voicing::Voiced && def.glottal.is_none() {
+        // a voiced "aspirate" (bʰ, as many transcriptions write it) is Nepali's breathy stop
+        tok.push(BREATHY);
+    }
+    tok
 }
 
 fn starts_with_at(s: &[char], i: usize, m: &str) -> bool {

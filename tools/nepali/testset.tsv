@@ -1,0 +1,62 @@
+# kind	text	expected IPA (words only; DRAFT by Claude, to be corrected by a native speaker)
+pair	ताल	t̪al
+pair	टाल	ʈal
+pair	थाल	t̪ʰal
+pair	ठाउँ	ʈʰaũ
+pair	दाल	d̪al
+pair	डाल	ɖal
+pair	धान	d̪ʱan
+pair	ढाल	ɖʱal
+pair	पाल	pal
+pair	फल	pʰʌl
+pair	बाल	bal
+pair	भाल	bʱal
+pair	काल	kal
+pair	खाल	kʰal
+pair	गाल	gal
+pair	घाम	gʱam
+pair	चार	tsaɾ
+pair	छाता	tsʰat̪a
+pair	जाडो	dzaɖo
+pair	झोला	dzʱola
+nasal	पाँच	pãts
+nasal	आँखा	ãkʰa
+nasal	हाँस्नु	ɦãsnu
+nasal	गाउँ	gaũ
+schwa	घर	gʱʌɾ
+schwa	नेपाल	nepal
+schwa	गर्छ	gʌɾtsʰʌ
+schwa	छैन	tsʰʌinʌ
+schwa	सरकार	sʌɾkaɾ
+schwa	जनता	dzʌnt̪a
+schwa	कमल	kʌmʌl
+schwa	बदलियो	bʌd̪lijo
+schwa	सहयोग	sʌɦʌjog
+schwa	नमस्ते	nʌmʌst̪e
+schwa	धन्यवाद	d̪ʱʌnjʌbad̪
+schwa	मानिस	manis
+schwa	किताब	kit̪ab
+schwa	हजुर	ɦʌdzuɾ
+schwa	बहिनी	bʌɦini
+cluster	क्षेत्र	tsʰet̪ɾʌ
+cluster	ज्ञान	gjan
+cluster	स्कूल	skul
+cluster	विद्यालय	bid̪jalʌj
+cluster	राम्रो	ɾamɾo
+cluster	कृषि	kɾisi
+cluster	विकास	bikas
+phrase	नमस्ते, तपाईंलाई कस्तो छ?
+phrase	मेरो नाम राम हो।
+phrase	म नेपाली बोल्छु।
+phrase	आज मौसम धेरै राम्रो छ।
+phrase	तपाईं कहाँ जाँदै हुनुहुन्छ?
+phrase	मलाई भात खान मन लाग्छ।
+phrase	यो किताब कसको हो?
+phrase	हामी भोलि काठमाडौं जान्छौं।
+phrase	पानी पर्दैछ, छाता लिनुहोस्।
+phrase	धन्यवाद, फेरि भेटौंला।
+phrase	बच्चाहरू विद्यालय गए।
+phrase	उसको घर पहाडमा छ।
+phrase	म तिमीलाई माया गर्छु।
+phrase	सगरमाथा संसारको सबैभन्दा अग्लो हिमाल हो।
+phrase	एक, दुई, तीन, चार, पाँच।

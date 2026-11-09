@@ -6,8 +6,8 @@
 //! sequencer) builds into a caller's `Vec` and allocates nothing once it has capacity.
 
 use super::durations::{SegInfo, klatt_durations};
-use super::inventory::{Glottal, Manner, PhonemeDef, Voicing, phoneme};
-use super::{Intonation, Plan, PlannedSegment, Segment};
+use super::inventory::{Glottal, Manner, Mods, PhonemeDef, Voicing, phoneme, split};
+use super::{Intonation, Lang, Plan, PlannedSegment, Segment};
 use crate::anatomy::human::{ArticKey, ArticPatch, BodyMix, BodyName};
 use crate::control::score::{ControlKey, Gesture, Targets};
 use crate::math::{js_max, js_min, js_round};
@@ -138,6 +138,9 @@ pub struct PlanOptions {
     /// fit short notes. Speech and live notes leave it unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sung: Option<bool>,
+    /// whose rules plan it (unset: English)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lang: Option<Lang>,
 }
 
 /// JS truthiness of an optional number (`if (s.f0)`: 0 and NaN are false).
@@ -163,7 +166,11 @@ fn one(k: impl Into<ControlKey>, x: f64) -> Targets {
 
 /// A planner segment: the input segment plus what the planner attaches to it.
 struct Seg<'a> {
+    /// the base phoneme (modifiers split off)
     ipa: &'a str,
+    /// the segment as written ("bʱ"), for the timeline
+    full: &'a str,
+    mods: Mods,
     dur: Option<f64>,
     stress: Option<u8>,
     f0: Option<f64>,
@@ -181,8 +188,11 @@ struct Span {
 pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
     let rate = o.rate.unwrap_or(1.0);
     let body = o.body;
+    let nepali = o.lang == Some(Lang::Nepali);
+    // modifiers split off: every lookup is on the base phoneme
+    let based: Vec<Segment> = input.iter().map(|s| Segment { ipa: split(&s.ipa).0.to_string(), ..s.clone() }).collect();
     // durations by the Klatt rules, on whole segments (diphthongs before they are split)
-    let durs = klatt_durations(input, |s| {
+    let durs = klatt_durations(&based, |s| {
         if is_vowel(&s.ipa, body) {
             return SegInfo { vowel: true, ..Default::default() };
         }
@@ -192,14 +202,15 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
     // expand diphthongs into two vowel targets sharing the duration
     let mut segs: Vec<Seg> = Vec::with_capacity(input.len() + 4);
     for (si, s) in input.iter().enumerate() {
-        if let Some(parts) = expand(&s.ipa) {
+        let (base_ipa, mods) = split(&s.ipa);
+        if let Some(parts) = expand(base_ipa) {
             let base = durs[si];
             for (i, p) in parts.iter().enumerate() {
                 let dur = if parts.len() > 1 { base * (if i == 0 { 0.55 } else { 0.45 }) } else { base };
-                segs.push(Seg { ipa: p, dur: Some(dur), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: i > 0 });
+                segs.push(Seg { ipa: p, full: p, mods, dur: Some(dur), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: i > 0 });
             }
         } else {
-            segs.push(Seg { ipa: &s.ipa, dur: Some(durs[si]), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: false });
+            segs.push(Seg { ipa: base_ipa, full: &s.ipa, mods, dur: Some(durs[si]), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: false });
         }
     }
     for s in segs.iter_mut() {
@@ -245,6 +256,10 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
         let r_in = js_max(0.03, 0.75 * (times[i].t0 - prev)) + 0.01;
         let r_out = js_max(0.03, 0.4 * (next - times[i].t1)) + 0.01;
         gestures.push(Gesture::new(times[i].t0, times[i].t1, r_in, r_out, 1.0, artic_targets(segs[i].vowel.as_ref().unwrap())).label(segs[i].ipa));
+        // a nasal vowel: the velum lowers over it
+        if segs[i].mods.nasal {
+            gestures.push(Gesture::new(times[i].t0, times[i].t1, 0.04, 0.04, 4.0, one(ArticKey::Velum, NASAL_VOWEL_VELUM)).label("nasal vowel"));
+        }
     }
     // utterance-initial/final consonants: lend them the nearest vowel's body posture
     // ---- consonant gestures
@@ -252,7 +267,7 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
         let Span { t0, t1 } = times[i];
         let dur = t1 - t0;
         planned.push(PlannedSegment {
-            ipa: s.ipa.to_string(),
+            ipa: s.full.to_string(),
             t0,
             t1,
             stress: if s.vowel.is_some() { Some(s.stress.unwrap_or(0)) } else { None },
@@ -307,9 +322,15 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
         } else if def.glottal == Some(Glottal::Stop) {
             gestures.push(Gesture::new(t0, t1, 0.012, 0.015, 8.0, one(ControlKey::CLOSURE, 1.0)).label("ʔ"));
         } else if def.voicing == Voicing::Voiceless {
-            if def.manner == Manner::Stop || def.manner == Manner::Affricate {
-                // aspirated when syllable-initial before a vowel and not after /s/ (English-like)
-                let aspirated = next_vowel && !prev_seg.is_some_and(|p| p.ipa == "s");
+            if nepali && s.mods.aspirated && (def.manner == Manner::Stop || def.manner == Manner::Affricate) {
+                // Nepali's phonemic aspirate: a wider opening held further past the release
+                // (VOT ~70 ms against English's ~50)
+                let vot = NEPALI_VOT / rate;
+                gestures.push(Gesture::new(t0 + 0.25 * dur, t1 + vot * 0.45, 0.035, 0.055, 6.0, one(ControlKey::ABDUCTION, 0.4)).label("aspiration"));
+            } else if def.manner == Manner::Stop || def.manner == Manner::Affricate {
+                // aspirated when syllable-initial before a vowel and not after /s/ (English-like);
+                // Nepali's plain stops never are
+                let aspirated = if nepali { false } else { next_vowel && !prev_seg.is_some_and(|p| p.ipa == "s") };
                 let vot = if aspirated { 0.05 / rate } else { 0.012 };
                 gestures.push(Gesture::new(t0 + 0.25 * dur, t1 + vot * 0.4, 0.035, if aspirated { 0.045 } else { 0.02 }, 6.0, one(ControlKey::ABDUCTION, if aspirated { 0.36 } else { 0.22 })).label("aspiration"));
             } else {
@@ -317,6 +338,13 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
             }
         } else if def.manner == Manner::Fricative {
             gestures.push(Gesture::new(t0, t1, 0.03, 0.03, 3.0, one(ControlKey::ABDUCTION, 0.035)).label("voiced frication"));
+        }
+        // Nepali's breathy-voiced consonants (bʱ dʱ gʱ, also mʱ ...): voiced through the closure,
+        // then the folds part a little at the release and stay apart into the vowel, so it
+        // starts murmured
+        if nepali && s.mods.breathy && def.voicing == Voicing::Voiced {
+            let murmur = NEPALI_MURMUR / rate;
+            gestures.push(Gesture::new(t1 - 0.01, t1 + murmur, 0.02, 0.04, 5.0, one(ControlKey::ABDUCTION, 0.16)).label("breathy release"));
         }
     }
     let open_end = o.open_end == Some(true);
@@ -338,7 +366,8 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
     }
     // ---- intonation: pitch targets on vowels
     let f0 = o.f0.unwrap_or(110.0);
-    let accent = o.accent.unwrap_or(0.14);
+    // Nepali's stress is mild: a smaller excursion
+    let accent = o.accent.unwrap_or(if nepali { NEPALI_ACCENT } else { 0.14 });
     let total = js_max(0.2, end - o.t0);
     // the nuclear accent: the phrase's last primary-stressed vowel, a bigger excursion that falls
     // (statements) into the final low; earlier accents are smaller (a "hat" pattern)
@@ -397,6 +426,15 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
     }
     Plan { gestures, segments: planned, end }
 }
+
+/// velum opening of a nasal vowel (cm²): less than a nasal consonant's 0.45, enough to colour it
+const NASAL_VOWEL_VELUM: f64 = 0.25;
+/// Nepali's pitch excursion on stressed syllables (English: 0.14)
+const NEPALI_ACCENT: f64 = 0.08;
+/// Nepali aspirated stops' voice onset time (s)
+const NEPALI_VOT: f64 = 0.07;
+/// how long a Nepali breathy release murmurs into the vowel (s)
+const NEPALI_MURMUR: f64 = 0.07;
 
 /// Front-to-back order of the oral places of articulation.
 fn place_rank(place: &str) -> Option<u8> {

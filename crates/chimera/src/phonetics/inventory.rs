@@ -135,7 +135,6 @@ impl PhonemeDef {
 // place templates
 const BILABIAL: Tg = &[(LipAp, -0.25)];
 const ALV_STOP: Tg = &[(TtX, 6.25), (TtY, 9.68)];
-#[allow(dead_code)]
 const DENT_STOP: Tg = &[(TtX, 6.85), (TtY, 9.0)];
 const POSTALV_STOP: Tg = &[(TtX, 5.75), (TtY, 10.0)];
 const RETRO_STOP: Tg = &[(TtX, 5.45), (TtY, 10.05), (TtCurl, 0.95)];
@@ -156,6 +155,8 @@ fn base() -> Vec<PhonemeDef> {
         c("b", "voiced bilabial stop", M::Stop, Voiced, "bilabial", t(BILABIAL), &LIPS, 0.07),
         c("t", "voiceless alveolar stop", M::Stop, Voiceless, "alveolar", t(ALV_STOP), &TIP, 0.075),
         c("d", "voiced alveolar stop", M::Stop, Voiced, "alveolar", t(ALV_STOP), &TIP, 0.06),
+        c("t̪", "voiceless dental stop", M::Stop, Voiceless, "dental", t(DENT_STOP), &TIP, 0.075),
+        c("d̪", "voiced dental stop", M::Stop, Voiced, "dental", t(DENT_STOP), &TIP, 0.06),
         c("ʈ", "voiceless retroflex stop", M::Stop, Voiceless, "retroflex", t(RETRO_STOP), TIP_CURL, 0.075),
         c("ɖ", "voiced retroflex stop", M::Stop, Voiced, "retroflex", t(RETRO_STOP), TIP_CURL, 0.065),
         c("c", "voiceless palatal stop", M::Stop, Voiceless, "palatal", t(PAL_STOP), &BODY, 0.08),
@@ -260,6 +261,39 @@ pub fn phoneme(ipa: &str, body: BodyMix) -> Option<PhonemeDef> {
         None => ArticPatch::blend(&body.weights().map(|(b, w)| (w, of(b)))),
     };
     Some(out)
+}
+
+/// What a segment adds to its base phoneme: aspiration (ʰ), breathy voice (ʱ), nasalisation
+/// (U+0303). Only the Nepali tokenizer emits them; English segments never carry any.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Mods {
+    pub aspirated: bool,
+    pub breathy: bool,
+    pub nasal: bool,
+}
+
+pub const ASPIRATED: char = 'ʰ';
+pub const BREATHY: char = 'ʱ';
+pub const NASALISED: char = '\u{303}';
+
+/// A segment's IPA split into its base phoneme and modifiers ("bʱ" → ("b", breathy),
+/// "ã" → ("a", nasal)). The dental mark stays in the base ("t̪" is its own phoneme).
+pub fn split(ipa: &str) -> (&str, Mods) {
+    let mut m = Mods::default();
+    let mut base = ipa;
+    while let Some(c) = base.chars().next_back() {
+        match c {
+            ASPIRATED => m.aspirated = true,
+            BREATHY => m.breathy = true,
+            NASALISED => m.nasal = true,
+            _ => break,
+        }
+        base = &base[..base.len() - c.len_utf8()];
+    }
+    if base.is_empty() {
+        return (ipa, Mods::default());
+    }
+    (base, m)
 }
 
 pub fn consonants() -> &'static [PhonemeDef] {
