@@ -12,7 +12,7 @@ use chimera::phonetics::beatbox::{self, BeatStep};
 use chimera::phonetics::planner::{self, PhraseInput, PlanOptions};
 use chimera::phonetics::sing::{self, MelismaOptions, NoteOnOptions, SongOptions, SungNote};
 use chimera::phonetics::english::EnglishG2P;
-use chimera::phonetics::{Segment, Syllable, ipa, songs, syllables, vowel_data};
+use chimera::phonetics::{Lang, Segment, Syllable, ipa, nepali, songs, syllables, vowel_data};
 use chimera::voice::human_airway::HumanAirway;
 use serde_json::{Value, json};
 use std::cell::RefCell;
@@ -117,7 +117,14 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
             Ok(json!({ "freqs": freqs, "db": db, "formants": formants }))
         }
         // ---------------------------------------------------------------- text → phonemes
-        "tokenizeIpa" => to_json(&ipa::tokenize_ipa(&arg::<String>(req, "text")?)),
+        "tokenizeIpa" => {
+            let text = arg::<String>(req, "text")?;
+            match arg::<Option<Lang>>(req, "lang")? {
+                Some(lang) => to_json(&ipa::tokenize_ipa_lang(&text, lang)),
+                None => to_json(&ipa::tokenize_ipa(&text)),
+            }
+        }
+        "nepaliPhrases" => to_json(&nepali::nepali_phrases(&arg::<String>(req, "text")?, &st.g2p)),
         "g2pLoad" => {
             st.g2p.load_dict(&arg::<String>(req, "text")?);
             Ok(json!(true))

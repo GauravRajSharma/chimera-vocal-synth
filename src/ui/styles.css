@@ -1977,6 +1977,17 @@ input[type="range"]::-moz-range-thumb {
   gap: 4px;
 }
 
+.say-tools,
+.lang-pick {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.say-tools {
+  gap: 10px;
+}
+
 .ipa-chip {
   text-transform: none;
   font-size: 12px;

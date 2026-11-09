@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useStore } from "../store.ts";
 import { speakText, speakPhrases, stopSpeaking, onPlan, currentPlan, spokenWordNow } from "../speech.ts";
 import { mouthWords } from "../mouthWords.ts";
-import { tokenizeIpa } from "../../wasm/engine.ts";
+import { isDevanagari, tokenizeIpa, type Lang } from "../../wasm/engine.ts";
 import { Slider, Toggle } from "./Controls.tsx";
 import { Chip, Screen } from "./Screen.tsx";
 import { ScoreView, planNow } from "./ScoreView.tsx";
@@ -12,7 +12,14 @@ import type { InfoFn, SlotsFn } from "./AnatomyView.tsx";
 import { V } from "../colors.ts";
 import { engine } from "../../audio/AudioEngine.ts";
 
-const EXAMPLES = ["Hello. Can you hear me?", "She sells sea shells by the sea shore.", "Every sound here is air moving through a throat.", "The quick brown fox jumps over the lazy dog."];
+const EXAMPLES: Record<Lang, string[]> = {
+  english: ["Hello. Can you hear me?", "She sells sea shells by the sea shore.", "Every sound here is air moving through a throat.", "The quick brown fox jumps over the lazy dog."],
+  nepali: ["नमस्ते। तपाईंलाई कस्तो छ?", "मेरो नाम काइमेरा हो।", "ताल, टाल। बाल, भाल। काल, खाल।", "आज मौसम धेरै राम्रो छ।"],
+};
+const LANGS: [Lang, string][] = [
+  ["english", "English"],
+  ["nepali", "नेपाली"],
+];
 
 // IPA pulmonic consonant chart (rows = manner, columns = place); empty cells are null
 const PLACES = ["Bilabial", "Labiodental", "Dental", "Alveolar", "Postalveolar", "Retroflex", "Palatal", "Velar", "Uvular", "Pharyngeal", "Glottal"];
@@ -29,6 +36,15 @@ const CHART: [string, (string | null)[][]][] = [
   ["Approximant", [[null, null], [null, "ʋ"], [null, null], [null, "ɹ"], [null, null], [null, "ɻ"], [null, "j"], [null, "ɰ"], [null, null], [null, null], [null, null]]],
   ["Lateral", [[null, null], [null, null], [null, null], [null, "l"], [null, null], [null, "ɭ"], [null, "ʎ"], [null, null], [null, null], [null, null], [null, null]]],
 ];
+/** Nepali's chart: dental stops, and its aspirated and breathy-voiced stops and affricates */
+const CHART_NEPALI: typeof CHART = CHART.flatMap(([manner, cells]): typeof CHART =>
+  manner === "Plosive"
+    ? [
+        [manner, cells.map((c, i) => (i === 2 ? ["t̪", "d̪"] : c))],
+        ["Aspirate", [["pʰ", "bʱ"], [null, null], ["t̪ʰ", "d̪ʱ"], ["tsʰ", "dzʱ"], [null, null], ["ʈʰ", "ɖʱ"], [null, null], ["kʰ", "gʱ"], [null, null], [null, null], [null, null]]],
+      ]
+    : [[manner, cells]],
+);
 
 /** the segment sounding now in the current utterance */
 function soundingSegment(): string | null {
@@ -66,7 +82,7 @@ export const speechInfo: InfoFn = (m, _f, tele) => {
   return out;
 };
 
-function ConsonantChart(props: { onPad: (c: string) => void }) {
+function ConsonantChart(props: { onPad: (c: string) => void; lang: Lang }) {
   const [now, setNow] = useState<string | null>(null);
   useEffect(() => {
     const id = setInterval(() => setNow(engine.latest ? soundingSegment() : null), 60);
@@ -86,7 +102,7 @@ function ConsonantChart(props: { onPad: (c: string) => void }) {
           </tr>
         </thead>
         <tbody>
-          {CHART.map(([manner, cells]) => (
+          {(props.lang === "nepali" ? CHART_NEPALI : CHART).map(([manner, cells]) => (
             <tr key={manner}>
               <th scope="row" title={manner} aria-label={manner}>
                 {MANNER_SHORT[manner] ?? manner}
@@ -117,8 +133,9 @@ export function SpeakRight() {
   const body = useStore((s) => s.body);
   const f0 = useStore((s) => s.source.f0);
   const start = useStore((s) => s.start);
-  const [text, setText] = useState(EXAMPLES[0]);
+  const [text, setText] = useState(EXAMPLES.english[0]);
   const [ipa, setIpa] = useState(false);
+  const [lang, setLang] = useState<Lang>("english");
   const [rate, setRate] = useState(1);
   const [busy, setBusy] = useState(false);
   const [trans, setTrans] = useState(currentPlan()?.transcription ?? "");
@@ -129,32 +146,54 @@ export function SpeakRight() {
     setBusy(true);
     try {
       await start();
-      await speakText(text, { ipa, body, rate, f0 });
+      await speakText(text, { ipa, body, rate, f0, lang });
     } finally {
       setBusy(false);
     }
   };
   const pad = async (c: string) => {
     await start();
-    speakPhrases([{ segments: tokenizeIpa(`ˈ${vowel}${c}${vowel}`), intonation: "flat" }], { body, rate, f0 });
+    const l = lang === "nepali" ? lang : undefined;
+    speakPhrases([{ segments: tokenizeIpa(`ˈ${vowel}${c}${vowel}`, l), intonation: "flat" }], { body, rate, f0, lang: l });
   };
 
   return (
     <div className="right right-speak">
-      <Screen className="s-say" title="Say" sub="Text to speech" tools={<Toggle label="Text is IPA" checked={ipa} onChange={setIpa} />}>
+      <Screen
+        className="s-say"
+        title="Say"
+        sub="Text to speech"
+        tools={
+          <div className="say-tools">
+            <div className="lang-pick" role="group" aria-label="Language">
+              {LANGS.map(([l, name]) => (
+                <Chip key={l} on={lang === l} onClick={() => setLang(l)}>
+                  {name}
+                </Chip>
+              ))}
+            </div>
+            <Toggle label="Text is IPA" checked={ipa} onChange={setIpa} />
+          </div>
+        }
+      >
         <div className="say">
           <div className="say-row">
             <textarea
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                setText(e.target.value);
+                // typing Devanagari means Nepali
+                if (!ipa && isDevanagari(e.target.value)) setLang("nepali");
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void speak();
                 e.stopPropagation();
               }}
               rows={2}
               spellCheck={!ipa}
+              lang={lang === "nepali" ? "ne" : "en"}
               aria-label={ipa ? "IPA to speak" : "Text to speak"}
-              placeholder={ipa ? "Type IPA, for example ˈhɛloʊ" : "Type something for the voice to say"}
+              placeholder={ipa ? (lang === "nepali" ? "Type IPA, for example nʌmʌst̪e" : "Type IPA, for example ˈhɛloʊ") : lang === "nepali" ? "नेपालीमा केही लेख्नुहोस्" : "Type something for the voice to say"}
             />
             <div className="say-actions">
               <button className="primary" onClick={() => void speak()} disabled={busy}>
@@ -174,7 +213,7 @@ export function SpeakRight() {
             </div>
           </div>
           <div className="examples" role="group" aria-label="Examples">
-            {EXAMPLES.map((ex) => (
+            {EXAMPLES[lang].map((ex) => (
               <Chip
                 key={ex}
                 toggle={false}
@@ -206,7 +245,7 @@ export function SpeakRight() {
           </div>
         }
       >
-        <ConsonantChart onPad={(c) => void pad(c)} />
+        <ConsonantChart onPad={(c) => void pad(c)} lang={lang} />
       </Screen>
       <Screen className="s-tube" title="Tube" sub="Glottis to lips">
         <TubeView />

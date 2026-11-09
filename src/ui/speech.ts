@@ -1,6 +1,6 @@
 /** Main-thread speech planning: text/IPA → phrases → gestural plan → worklet. */
 import type { BodyMix } from "../wasm/types.ts";
-import { EnglishG2P, type Phrase } from "../wasm/engine.ts";
+import { EnglishG2P, nepaliPhrases, type Lang, type Phrase } from "../wasm/engine.ts";
 import { tokenizeIpa } from "../wasm/engine.ts";
 import { planPhrases, type Plan, type Segment } from "../wasm/engine.ts";
 import { engine } from "../audio/AudioEngine.ts";
@@ -39,37 +39,42 @@ export function currentPlan(): SpokenPlan | null {
   return current;
 }
 
-export function ipaToPhrases(text: string): Phrase[] {
+export function ipaToPhrases(text: string, lang?: Lang): Phrase[] {
   return text
     .split(/[|.?!]+/)
     .map((p) => p.trim())
     .filter(Boolean)
-    .map((p) => ({ segments: tokenizeIpa(p), intonation: "statement" as const, pause: 0.3, words: [] }));
+    .map((p) => ({ segments: tokenizeIpa(p, lang), intonation: "statement" as const, pause: 0.3, words: [] }));
 }
 
-export function transcribe(phrases: { segments: Segment[]; intonation?: string }[]): string {
-  return phrases.map((p) => p.segments.map((s) => (s.stress === 1 ? "ˈ" : s.stress === 2 ? "ˌ" : "") + s.ipa + (s.wordEnd ? " " : "")).join("").trim() + (p.intonation === "question" ? "?" : "")).join(" | ");
+/** The phrases as IPA. Nepali marks only the stressed syllable (its other vowels carry
+ *  secondary stress so they aren't reduced, which isn't worth a mark each). */
+export function transcribe(phrases: { segments: Segment[]; intonation?: string }[], lang?: Lang): string {
+  const secondary = lang === "nepali" ? "" : "ˌ";
+  return phrases.map((p) => p.segments.map((s) => (s.stress === 1 ? "ˈ" : s.stress === 2 ? secondary : "") + s.ipa + (s.wordEnd ? " " : "")).join("").trim() + (p.intonation === "question" ? "?" : "")).join(" | ");
 }
 
-export function speakPhrases(phrases: { segments: Segment[]; intonation?: "statement" | "question" | "flat"; pause?: number; words?: string[] }[], o: { body: BodyMix; rate: number; f0: number }): SpokenPlan {
-  const plan = planPhrases(phrases, { body: o.body, t0: 0, rate: o.rate, f0: o.f0 });
+export function speakPhrases(phrases: { segments: Segment[]; intonation?: "statement" | "question" | "flat"; pause?: number; words?: string[] }[], o: { body: BodyMix; rate: number; f0: number; lang?: Lang }): SpokenPlan {
+  const plan = planPhrases(phrases, { body: o.body, t0: 0, rate: o.rate, f0: o.f0, ...(o.lang === "nepali" ? { lang: o.lang } : {}) });
   const id = engine.schedule({ gestures: plan.gestures.map((g: Gesture) => ({ ...g, targets: { ...g.targets } })), segments: plan.segments, end: plan.end });
-  current = { plan, offset: null, id, transcription: transcribe(phrases), words: wordSpans(phrases, plan) };
+  current = { plan, offset: null, id, transcription: transcribe(phrases, o.lang), words: wordSpans(phrases, plan) };
   for (const l of listeners) l(current);
   return current;
 }
 
-export async function speakText(text: string, o: { ipa: boolean; body: BodyMix; rate: number; f0: number }): Promise<SpokenPlan | null> {
+export async function speakText(text: string, o: { ipa: boolean; body: BodyMix; rate: number; f0: number; lang?: Lang }): Promise<SpokenPlan | null> {
   if (!text.trim()) return null;
+  const nepali = o.lang === "nepali";
   let phrases: Phrase[];
-  if (o.ipa) phrases = ipaToPhrases(text);
+  if (o.ipa) phrases = ipaToPhrases(text, nepali ? "nepali" : undefined);
   else {
     try {
+      // Nepali text reads its Latin words through it too
       await g2p.load();
     } catch {
       // dictionary unavailable: the letter-to-sound rules still work
     }
-    phrases = g2p.toPhrases(text);
+    phrases = nepali ? nepaliPhrases(text) : g2p.toPhrases(text);
   }
   if (!phrases.length) return null;
   return speakPhrases(phrases, o);

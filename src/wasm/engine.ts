@@ -56,8 +56,24 @@ export const creatureById = (id: string): CreatureDef | undefined => CREATURES.f
 // ------------------------------------------------------------------ text → phonemes
 
 /** IPA text → segments (stress marks, word breaks, multi-character symbols). */
-export function tokenizeIpa(text: string): Segment[] {
-  return call("tokenizeIpa", { text });
+export function tokenizeIpa(text: string, lang?: Lang): Segment[] {
+  return call("tokenizeIpa", lang ? { text, lang } : { text });
+}
+
+/** A language's rules for text and planning. */
+export type Lang = "english" | "nepali";
+
+/** Whether text is Nepali (has a Devanagari letter; the dandas alone don't count). */
+export function isDevanagari(text: string): boolean {
+  return /[\u0900-\u0963\u0966-\u096F\u0971-\u097F]/.test(text);
+}
+
+/**
+ * Nepali text (Devanagari) → phrases, in Kathmandu pronunciation. Latin words in it go through
+ * the page's English dictionary (load it first for dictionary pronunciations).
+ */
+export function nepaliPhrases(text: string): Phrase[] {
+  return call("nepaliPhrases", { text });
 }
 
 /**
@@ -135,6 +151,8 @@ export interface PlanOptions {
   /** a sung phrase (planSong sets it): consonants given a pitch hold it, and pitch ramps shrink
    *  to fit short notes */
   sung?: boolean;
+  /** whose rules plan it (unset: English) */
+  lang?: Lang;
 }
 
 export function planUtterance(segments: Segment[], options: PlanOptions): Plan {
